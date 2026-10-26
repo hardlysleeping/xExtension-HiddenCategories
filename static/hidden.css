@@ -120,6 +120,59 @@ html[data-hc-view="only"] li.tree-folder.category[data-hc-hidden="1"] {
 .rs-bar {
 	padding: 0.35em 0.6em 0.45em;
 }
+
+/* ---- the curtain: one switch collapses the row above the tree --------
+ * That row carries an eye, a lock, a pin box, and whatever a sibling
+ * extension puts beside them — all of it advertising that something is
+ * hidden or locked. Collapsed, the bar's other children are gone and only
+ * the switch is left, so the sidebar reads as ordinary.
+ *
+ * The switch is a child of .rs-bar, NOT of the shared row: the row splits a
+ * fixed width between its controls, so sitting in it would take width from
+ * every button — measurably too much from the pin field. Above the row it
+ * costs a strip of height instead.
+ *
+ * The hide rule names no extension: it hides the bar's children generically,
+ * so a sibling's button collapses with ours and its code is never touched.
+ * State lives on <html data-hc-bar>, set by hidden.js before the bar exists.
+ */
+.hc-bar-toggle {
+	cursor: pointer;
+	font: inherit;
+	font-size: 0.9em;
+	line-height: 1;
+	padding: 0;
+	/* a full-width strip, not a small square: same height as before, but the
+	 * whole line is the tap target and the caret sits at its LEFT edge, in
+	 * line with the buttons below it. */
+	width: 100%;
+	min-height: 1.5em;
+	/* a hair of air between the strip and the row beneath it, so the two do
+	 * not read as one stacked control */
+	margin: 0 0 0.35em;
+	border-radius: 5px;
+	border: 1px solid rgba(128, 128, 128, 0.3);
+	background: transparent;
+	color: inherit;
+	/* quiet by default: the switch is a way in, not an announcement */
+	opacity: 0.45;
+	display: flex;
+	align-items: center;
+	justify-content: flex-start;
+	text-align: left;
+}
+.hc-bar-toggle:hover,
+.hc-bar-toggle:focus-visible {
+	opacity: 1;
+	background: rgba(128, 128, 128, 0.16);
+}
+.hc-bar-toggle .hc-caret {
+	font-size: 0.8em;
+	line-height: 1;
+}
+html[data-hc-bar="closed"] .rs-bar > *:not(.hc-bar-toggle) {
+	display: none !important;
+}
 .hc-view-btn {
 	width: 100%;
 	cursor: pointer;

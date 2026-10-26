@@ -2,6 +2,20 @@
 
 Newest first. These version numbers match the [releases page](https://github.com/hardlysleeping/xExtension-HiddenCategories/releases).
 
+**1.5.19** — the extension can be driven from outside its settings form, and the published copy catches up.
+
+Hiding a category, changing the view and the three lock actions are available as methods on the
+extension (`setCategoryHidden()`, `changeView()`, `lock()`, `unlock()`, `setPasscode()`). Each takes an
+explicit target and returns what changed instead of redirecting, so the settings form and anything that
+fronts this extension share one behaviour path rather than two that can drift.
+
+This release also brings the published source back in line with the version running on a real
+instance: the previous upload here was missing those entry points, so anything driving the extension
+from outside the browser form — including automated tests — was told the extension could not hide
+anything.
+
+No migration, and nothing changes on upgrade.
+
 **1.5.18** — a sweep can no longer blank the peeking and only-hidden views.
 
 The peeking and only-hidden views lift the hiding on purpose: at *Do not show* the server sends no

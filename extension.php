@@ -786,6 +786,168 @@ class HiddenCategoriesExtension extends Minz_Extension
 		return null;
 	}
 
+	// ------------------------------------------- programmatic entry points
+	//
+	// The settings form and anything that fronts this extension (an API, a
+	// client) both go through these two methods. One behaviour path, so the
+	// web UI and a client cannot diverge. Both take an explicit target rather
+	// than toggling, and both return a result array instead of redirecting.
+
+	// ------------------------------------------------------------ the lock
+	//
+	// The curtain's three controls, extracted for the same reason as the hide
+	// methods above: the settings form and any client must share one behaviour
+	// path. The store owns the passcode and the locked flag; these just report
+	// what changed.
+
+	/**
+	 * Arms the curtain. Refused when no passcode exists, because there would be
+	 * no way back in.
+	 *
+	 * @return array{ok:bool,changed:bool,message:string}
+	 */
+	public function lock(): array
+	{
+		$before = $this->store()->isLocked();
+		$result = $this->store()->lock();
+
+		return [
+			'ok' => (bool) $result['ok'],
+			'changed' => $before !== $this->store()->isLocked(),
+			'message' => (string) $result['message'],
+		];
+	}
+
+	/**
+	 * Unlocks with the passcode. Global, not per session: the flag is stored
+	 * once, so unlocking here unlocks everywhere, including the web UI.
+	 *
+	 * @return array{ok:bool,changed:bool,message:string}
+	 */
+	public function unlock(?string $given): array
+	{
+		$before = $this->store()->isLocked();
+		$result = $this->store()->unlock($given);
+
+		return [
+			'ok' => (bool) $result['ok'],
+			'changed' => $before !== $this->store()->isLocked(),
+			'message' => (string) $result['message'],
+		];
+	}
+
+	/**
+	 * Sets or clears the passcode. An empty string disables the lock, matching
+	 * the settings form.
+	 *
+	 * @return array{ok:bool,changed:bool,message:string}
+	 */
+	public function setPasscode(string $code): array
+	{
+		$before = $this->store()->hasPasscode();
+		$result = $this->store()->setPasscode($code);
+
+		return [
+			'ok' => (bool) $result['ok'],
+			'changed' => $before !== $this->store()->hasPasscode(),
+			'message' => (string) $result['message'],
+		];
+	}
+
+	/**
+	 * Hide or show one category.
+	 *
+	 * Idempotent: hiding an already-hidden category changes nothing and says so.
+	 *
+	 * @return array{ok:bool,changed:bool,code:string,message:string,sweep?:array<string,mixed>}
+	 */
+	public function setCategoryHidden(int $catId, bool $hidden): array
+	{
+		if ($catId <= 0) {
+			return ['ok' => false, 'changed' => false, 'code' => 'invalid_category', 'message' => 'No category was named, so nothing changed.'];
+		}
+		// Name comes from the database, never from the caller: a supplied name
+		// could label one category while hiding another.
+		$name = $this->categoryName($catId);
+		if ($name === null) {
+			return ['ok' => false, 'changed' => false, 'code' => 'category_not_found', 'message' => 'Category ' . $catId . ' no longer exists — nothing changed.'];
+		}
+		$result = $hidden
+			? $this->store()->hideCategory($catId, $name)
+			: $this->store()->unhideCategory($catId, $name);
+		if (!$result['ok']) {
+			return ['ok' => false, 'changed' => false, 'code' => 'store_error', 'message' => $result['message']];
+		}
+		// Converge the feeds to the new definition (no-op in Light except for
+		// restoring anything left over from a previous Strict run).
+		$sweep = $this->sweepFeeds();
+		$extra = $this->sweepMessage($sweep);
+		if (!$sweep['ok']) {
+			return ['ok' => false, 'changed' => $result['changed'], 'code' => 'convergence_failed', 'message' => $result['message'] . ' But ' . $extra, 'sweep' => $sweep];
+		}
+		return ['ok' => true, 'changed' => $result['changed'], 'code' => '', 'message' => $result['message'] . $extra, 'sweep' => $sweep];
+	}
+
+	/**
+	 * Switch the view to an explicit target: hidden, revealed or only.
+	 *
+	 * Named changeView() rather than setEffectiveView() because effectiveView()
+	 * already means "what the user is actually seeing", which differs from the
+	 * stored view while locked.
+	 *
+	 * @return array{ok:bool,code:string,message:string,sweep?:array<string,mixed>}
+	 */
+	public function changeView(string $view): array
+	{
+		// A hand-crafted view change while locked must not work, or the lock
+		// could be bypassed from another tab.
+		if (!$this->sessionUnlocked()) {
+			return ['ok' => false, 'code' => 'locked', 'message' => 'Locked: unlock first.'];
+		}
+		if (!in_array($view, HiddenCategoriesStore::VIEWS, true)) {
+			return ['ok' => false, 'code' => 'invalid_view', 'message' => 'Unknown view "' . $view . '"' . ': nothing was changed.'];
+		}
+		if (!$this->store()->setView($view)) {
+			return ['ok' => false, 'code' => 'store_error', 'message' => 'Could not save the view: nothing was changed.'];
+		}
+		// PEEKING and ONLY-HIDDEN both need the feeds to exist in the page.
+		// In Strict a hidden feed sits at -10 and the server never sends its
+		// articles, so both states would render empty. So enforcement is
+		// suspended for BOTH and re-applied when the eye returns to 'hidden'.
+		// Light has nothing to lift.
+		$sweep = ['ok' => true, 'enforced' => 0, 'restored' => 0, 'skipped' => 0, 'failed' => 0, 'message' => ''];
+		if ($this->store()->mode() === 'strict') {
+			if ($view === 'only') {
+				// Make the view true for other clients too: lift hiding on the
+				// hidden feeds, demote everything else.
+				$sweep = $this->enterOnlyView();
+			} else {
+				// Leaving the view: undo the inverse demotion first, or those
+				// feeds would stay invisible for the next view.
+				$back = $this->exitOnlyView();
+				$sweep = ($view === 'revealed') ? $this->suspendEnforcement() : $this->sweepFeeds();
+				$sweep['restored'] += $back['restored'];
+				if ($back['failed'] > 0) {
+					$sweep['ok'] = false;
+					$sweep['failed'] += $back['failed'];
+					$sweep['message'] = $back['failed'] . ' feed(s) could not be restored after the view';
+				}
+			}
+		}
+		if (!$sweep['ok']) {
+			return ['ok' => false, 'code' => 'convergence_failed', 'message' => $sweep['message'], 'sweep' => $sweep];
+		}
+		$detail = $this->sweepMessage($sweep);
+		return [
+			'ok' => true,
+			'code' => '',
+			'message' => ($view === 'only' ? 'Showing only hidden categories.'
+				: ($view === 'revealed' ? 'Peeking: hidden categories are mixed back in.'
+					: 'Hidden categories are hidden again.')) . $detail,
+			'sweep' => $sweep,
+		];
+	}
+
 	/** POST handling only. Everything that must happen on ANY settings-page
 	 *  render lives in handleConfigureAction() above. */
 	private function handleConfigurePost(): void
@@ -807,34 +969,12 @@ class HiddenCategoriesExtension extends Minz_Extension
 		switch ($act) {
 			case 'hide':
 			case 'unhide':
-				$catId = Minz_Request::paramInt('cat');
-				if ($catId <= 0) {
-					Minz_Request::bad('No category was named, so nothing changed.', $this->selfUrl());
-					return;
+				$r = $this->setCategoryHidden(Minz_Request::paramInt('cat'), $act === 'hide');
+				if ($r['ok']) {
+					Minz_Request::good($r['message'], $this->selfUrl());
+				} else {
+					Minz_Request::bad($r['message'], $this->selfUrl());
 				}
-				// Name comes from the database, never from the request: a posted
-				// name could label one category while hiding another.
-				$name = $this->categoryName($catId);
-				if ($name === null) {
-					Minz_Request::bad('Category ' . $catId . ' no longer exists — nothing changed.', $this->selfUrl());
-					return;
-				}
-				$result = $act === 'hide'
-					? $this->store()->hideCategory($catId, $name)
-					: $this->store()->unhideCategory($catId, $name);
-				if (!$result['ok']) {
-					Minz_Request::bad($result['message'], $this->selfUrl());
-					return;
-				}
-				// converge the feeds to the new definition (no-op in Light except
-				// for restoring anything left over from a previous Strict run)
-				$sweep = $this->sweepFeeds();
-				$extra = $this->sweepMessage($sweep);
-				if (!$sweep['ok']) {
-					Minz_Request::bad($result['message'] . ' But ' . $extra, $this->selfUrl());
-					return;
-				}
-				Minz_Request::good($result['message'] . $extra, $this->selfUrl());
 				return;
 
 			case 'only':
@@ -926,60 +1066,19 @@ class HiddenCategoriesExtension extends Minz_Extension
 				return;
 
 			case 'view':
-				// A hand-crafted view change while locked must not work, or the
-				// lock could be bypassed from another tab.
-				if (!$this->sessionUnlocked()) {
-					Minz_Request::bad('Locked: unlock first.', $this->selfUrl());
-					return;
-				}
 				// One button, three states. Accepts an explicit target so the
 				// button can send the state it displays; refuses anything else
-				// rather than guessing.
+				// rather than guessing. Lock and range checks live in changeView().
 				$to = Minz_Request::paramStringNull('to', true);
 				if ($to === null || trim($to) === '') {
 					$to = $this->store()->nextView();
 				}
-				$to = trim($to);
-				if (!in_array($to, HiddenCategoriesStore::VIEWS, true)) {
-					Minz_Request::bad('Unknown view "' . $to . '"' . ': nothing was changed.', $this->selfUrl());
-					return;
+				$r = $this->changeView(trim($to));
+				if ($r['ok']) {
+					Minz_Request::good($r['message'], $this->selfUrl());
+				} else {
+					Minz_Request::bad($r['message'], $this->selfUrl());
 				}
-				if (!$this->store()->setView($to)) {
-					Minz_Request::bad('Could not save the view: nothing was changed.', $this->selfUrl());
-					return;
-				}
-				// PEEKING and ONLY-HIDDEN both need the feeds to exist in the page.
-				// In Strict a hidden feed sits at -10 and the server never sends
-				// its articles, so both states would render empty: 'only' filters
-				// down to nothing, which reads as a broken greyed-out view.
-				// So enforcement is suspended for BOTH; it is re-applied when the
-				// eye goes back to 'hidden'. Light has nothing to lift.
-				$sweep = ['ok' => true, 'enforced' => 0, 'restored' => 0, 'skipped' => 0, 'failed' => 0, 'message' => ''];
-				if ($this->store()->mode() === 'strict') {
-					if ($to === 'only') {
-						// make the view true for other clients too: lift hiding on
-						// the hidden feeds, demote everything else
-						$sweep = $this->enterOnlyView();
-					} else {
-						// leaving the view: undo the inverse demotion first, or
-						// those feeds would stay invisible for the next view
-						$back = $this->exitOnlyView();
-						$sweep = ($to === 'revealed') ? $this->suspendEnforcement() : $this->sweepFeeds();
-						$sweep['restored'] += $back['restored'];
-						if ($back['failed'] > 0) {
-							$sweep['ok'] = false;
-							$sweep['failed'] += $back['failed'];
-							$sweep['message'] = $back['failed'] . ' feed(s) could not be restored after the view';
-						}
-					}
-				}
-				$detail = $this->sweepMessage($sweep);
-				Minz_Request::good(
-					($to === 'only' ? 'Showing only hidden categories.'
-						: ($to === 'revealed' ? 'Peeking: hidden categories are mixed back in.'
-							: 'Hidden categories are hidden again.')) . $detail,
-					$this->selfUrl()
-				);
 				return;
 
 			case 'mode':

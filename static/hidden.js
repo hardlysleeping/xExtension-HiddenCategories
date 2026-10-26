@@ -79,6 +79,38 @@
 	root.setAttribute('data-hc-view', view);
 	root.setAttribute('data-hc-mode', 'hide');
 
+	// ---- the curtain ------------------------------------------------------
+	//
+	// The shared row above the tree advertises things: an eye, a lock, a pin
+	// box, and whatever a sibling extension puts beside them. Collapsing it
+	// takes all of that out of sight in one move, so an armed or filtered
+	// instance looks like a plain sidebar.
+	//
+	// Kept in localStorage, not in the extension's own state: it is a display
+	// choice for THIS browser — the screen someone else can look at — so
+	// flipping it costs no request and no reload. Reading it here, before any
+	// control is built, is what stops the row painting open and then
+	// collapsing.
+	var BAR_KEY = 'hc-bar';
+
+	function readBarCollapsed() {
+		try {
+			return window.localStorage.getItem(BAR_KEY) === 'closed';
+		} catch (e) {
+			return false;   // storage disabled (private mode): start open
+		}
+	}
+
+	function writeBarCollapsed(closed) {
+		try {
+			window.localStorage.setItem(BAR_KEY, closed ? 'closed' : 'open');
+		} catch (e) {
+			// a browser that cannot store still toggles; it just forgets
+		}
+	}
+
+	root.setAttribute('data-hc-bar', readBarCollapsed() ? 'closed' : 'open');
+
 	// ---- 2. per-id rules, injected once ------------------------------------
 	//
 	// The hiding selectors need one line per hidden category. Generating them
@@ -329,9 +361,46 @@
 			var el = document.getElementById(id);
 			if (el && el.parentNode) { el.parentNode.removeChild(el); }
 		};
+		removeOwn('hc-bar-toggle');
 		removeOwn('hc-unlock-form');
 		removeOwn('hc-view-btn');
 		removeOwn('hc-lock-btn');
+
+		// ---- the collapse switch -------------------------------------------
+		// Its OWN line above the row, not a child of it. The row is shared
+		// ground with a fixed width, so any control added to it takes space
+		// from every other control — and the pin field in the locked state is
+		// the one that cannot spare it (measured: it lost 14px, leaving 6
+		// digits nowhere to sit). Standing above the row costs a strip of
+		// height instead and leaves the row exactly as wide as it was.
+		//
+		// Collapsed, this is the only thing left drawn in the bar: the
+		// stylesheet hides the bar's other children generically, so a sibling
+		// extension's button goes with ours and its code is never touched.
+		var tog = document.createElement('button');
+		tog.type = 'button';
+		tog.id = 'hc-bar-toggle';
+		tog.className = 'hc-bar-toggle';
+		var drawToggle = function () {
+			var closed = root.getAttribute('data-hc-bar') === 'closed';
+			tog.innerHTML = '<span class="hc-caret" aria-hidden="true">'
+				+ (closed ? '\u25B8' : '\u25BE') + '</span>';
+			tog.title = closed ? 'Show the sidebar controls' : 'Hide the sidebar controls';
+			tog.setAttribute('aria-label', tog.title);
+			tog.setAttribute('aria-expanded', closed ? 'false' : 'true');
+		};
+		tog.addEventListener('click', function (ev) {
+			ev.preventDefault();
+			ev.stopPropagation();
+			var closed = root.getAttribute('data-hc-bar') !== 'closed';
+			root.setAttribute('data-hc-bar', closed ? 'closed' : 'open');
+			writeBarCollapsed(closed);
+			drawToggle();
+		});
+		drawToggle();
+		// first child of the bar, so it is the top-left corner of the sidebar
+		// whatever else any extension has put in there
+		bar.insertBefore(tog, bar.firstChild);
 
 		// ---- placement: this extension's control sits FIRST in the row ------
 		// Appending would make our position depend on which extension's script
