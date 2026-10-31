@@ -299,7 +299,19 @@ html[data-hc-bar="closed"] .rs-bar > *:not(.hc-bar-toggle) {
 }
 
 /* ---- subscription management: Hide button in each category box ------- */
-.hc-sub-btn {
+/* FreshRSS core styles EVERY `.btn` inside .box-title as an absolutely
+ * positioned toggle (frss.css `.box .box-title .btn` — written for the stats
+ * +/- buttons). Left alone, ours lands at right:16px on top of any sibling
+ * extension's button in the same header and the two intersect.
+ * The specificity is one class higher than core's AND the three positioning
+ * properties are !important, so neither a later core rule nor a theme that
+ * restyles `.box-title .btn` can put these back on top of each other. */
+.box .box-title .btn.hc-sub-btn {
+	position: static !important;
+	right: auto !important;
+	top: auto !important;
+	min-height: 0;
+	line-height: 1.2;
 	margin-left: 0.5em;
 	font-size: 0.8em;
 	padding: 0.1em 0.6em;

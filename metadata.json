@@ -2,7 +2,7 @@
 	"name": "Hidden Categories",
 	"author": "hardlysleeping",
 	"description": "Temporarily hide categories from the sidebar and main stream. One button cycles hidden / revealed / only-hidden, with a sidebar row whose label and count can each be switched off. Light filters in the browser and writes nothing; Strict hides feeds on every synced client. Pin lock is on by default (0000, 1-6 digits, stored in plain text as a curtain rather than security). Hiding works on its own; the sidebar right-click item needs Right Click Actions (xExtension-RightClickActions) installed.",
-	"version": "1.5.19",
+	"version": "1.5.20",
 	"entrypoint": "HiddenCategories",
 	"type": "user"
 }

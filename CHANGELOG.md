@@ -2,6 +2,18 @@
 
 Newest first. These version numbers match the [releases page](https://github.com/hardlysleeping/xExtension-HiddenCategories/releases).
 
+**1.5.20** — the Hide button stops colliding with a sibling's button in subscription management.
+
+FreshRSS styles *every* `.btn` inside a category box's header as an absolutely positioned toggle — that
+rule is written for the stats page's +/- buttons, but it also catches anything injected into
+`div.box-title` on the subscription page. Two extensions that each add a button there therefore land
+on the same spot (`right: 1rem`) and render intersecting and clipped. The button now pins itself back
+into the text flow: a selector one class more specific than core's, plus `!important` on `position`,
+`right` and `top`, so neither a later core rule nor a theme that restyles `.box-title .btn` can put it
+back on top of a neighbour.
+
+Layout only. No migration, no settings, nothing changes on upgrade.
+
 **1.5.19** — the extension can be driven from outside its settings form, and the published copy catches up.
 
 Hiding a category, changing the view and the three lock actions are available as methods on the
